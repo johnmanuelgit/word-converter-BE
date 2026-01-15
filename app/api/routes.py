@@ -4,9 +4,9 @@ from app.models.conversion import ConversionModel, ConversionResponse, Conversio
 from app.services.pdf_service import PDFService
 from app.core.config import settings
 import os
-import shutil
+
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict
 
 
 router = APIRouter(prefix="/api", tags=["conversions"])
@@ -206,51 +206,4 @@ async def download_conversion(conversion_id: str):
     )
 
 
-@router.get("/conversions/", response_model=List[ConversionResponse])
-async def list_conversions(skip: int = 0, limit: int = 50):
-    """
-    List all conversions
-    """
-    all_conversions = list(conversions_db.values())
-    # Sort by created_at desc
-    all_conversions.sort(key=lambda x: x.created_at, reverse=True)
-    
-    paginated = all_conversions[skip : skip + limit]
-    
-    return [
-        ConversionResponse(
-            id=c.id,
-            original_file_name=c.original_file_name,
-            file_size=c.file_size,
-            status=c.status,
-            conversion_type=c.conversion_type,
-            is_scanned_pdf=c.is_scanned_pdf,
-            error_message=c.error_message,
-            created_at=c.created_at.isoformat(),
-            completed_at=c.completed_at.isoformat() if c.completed_at else None
-        )
-        for c in paginated
-    ]
 
-
-@router.delete("/conversions/{conversion_id}/", status_code=204)
-async def delete_conversion(conversion_id: str):
-    """
-    Delete conversion and associated files
-    """
-    if conversion_id not in conversions_db:
-        raise HTTPException(status_code=404, detail="Conversion not found")
-    
-    conversion = conversions_db[conversion_id]
-    
-    # Delete files
-    if conversion.upload_file_path and os.path.exists(conversion.upload_file_path):
-        os.remove(conversion.upload_file_path)
-    
-    if conversion.converted_file_path and os.path.exists(conversion.converted_file_path):
-        os.remove(conversion.converted_file_path)
-    
-    # Delete from memory
-    del conversions_db[conversion_id]
-    
-    return None
