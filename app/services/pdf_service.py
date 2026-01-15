@@ -71,17 +71,16 @@ class PDFService:
     @staticmethod
     def convert_scanned_pdf_with_ocr(pdf_path: str, output_path: str) -> None:
         """
-        Convert scanned PDF using OCR with specific handling for images/tables.
-        Strategy:
-        1. Convert PDF page to image.
-        2. Attempt OCR to extract text.
-        3. If text is sparse (likely an image/diagram), insert the image itself into the DOCX.
-        4. If text is found, insert text.
+        Convert scanned PDF using OCR using a 'Dual Output' strategy.
+        To ensure no data is lost (e.g. passport photos, complex tables) and text is editable:
+        1. Insert the Page Image (Visual fidelity).
+        2. Insert the Extracted Text below it (Editability).
         """
         import tempfile
         try:
             from docx import Document
-            from docx.shared import Inches
+            from docx.shared import Inches, Pt
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
             
             # Convert PDF pages to images
             try:
@@ -99,36 +98,43 @@ class PDFService:
                 for i, image in enumerate(images):
                     print(f"Processing page {i+1}/{len(images)} with OCR...")
                     
-                    # 1. Try OCR first
+                    # 1. OCR Extraction
                     try:
                         text = pytesseract.image_to_string(image)
                     except Exception as e:
                         print(f"OCR failed for page {i+1}: {e}")
                         text = ""
                     
-                    # 2. Analyze content
-                    # If text is very short (< 50 chars), it's likely an image/chart/table that OCR missed
-                    # or purely graphical content. In this case, we preserve the visual by inserting the image.
-                    if len(text.strip()) < 50:
-                        print(f"  - Low text content detected ({len(text.strip())} chars). Inserting image preservation.")
+                    # 2. Insert Page Image (Preserves photos, layout, tables)
+                    img_path = os.path.join(temp_dir, f"page_{i}.png")
+                    image.save(img_path, "PNG")
+                    
+                    try:
+                        # Add image centered
+                        doc.add_picture(img_path, width=Inches(6.0))
+                        last_paragraph = doc.paragraphs[-1] 
+                        last_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    except Exception as e:
+                        print(f"Failed to insert image for page {i+1}: {e}")
+
+                    # 3. Insert Extracted Text (Provides editability)
+                    if text.strip():
+                        # Add a separator
+                        p = doc.add_paragraph()
+                        run = p.add_run("--- Extracted Text Below ---")
+                        run.font.size = Pt(8)
+                        run.font.italic = True
+                        run.font.color.rgb = None # Default color
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                         
-                        # Save image to temp path
-                        img_path = os.path.join(temp_dir, f"page_{i}.png")
-                        image.save(img_path, "PNG")
-                        
-                        # Add image to DOCX (resize to fit standard page width approx 6 inches)
-                        try:
-                            doc.add_picture(img_path, width=Inches(6.0))
-                        except Exception as e:
-                            print(f"  - Failed to insert image: {e}")
-                            # Fallback: Just add whatever text we found
-                            if text.strip():
-                                doc.add_paragraph(text)
-                    else:
-                        # 3. Text found - insert it
-                        # We could also insert the image *and* the text, but that duplicates content.
-                        # For editable requirements, text is preferred.
                         doc.add_paragraph(text)
+                    else:
+                        # Inform user if no text found
+                        p = doc.add_paragraph()
+                        run = p.add_run("[No text text detected on this page - Image only]")
+                        run.font.size = Pt(8)
+                        run.font.italic = True
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
                     # Add page break except for last page
                     if i < len(images) - 1:
