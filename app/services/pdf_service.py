@@ -70,35 +70,69 @@ class PDFService:
     
     @staticmethod
     def convert_scanned_pdf_with_ocr(pdf_path: str, output_path: str) -> None:
-        """Convert scanned PDF using OCR"""
+        """
+        Convert scanned PDF using OCR with specific handling for images/tables.
+        Strategy:
+        1. Convert PDF page to image.
+        2. Attempt OCR to extract text.
+        3. If text is sparse (likely an image/diagram), insert the image itself into the DOCX.
+        4. If text is found, insert text.
+        """
+        import tempfile
         try:
             from docx import Document
+            from docx.shared import Inches
             
-            # Check for poppler/tesseract dependencies availability if possible
-            # For now, just try conversion
-            
+            # Convert PDF pages to images
             try:
                 images = convert_from_path(pdf_path)
             except Exception as e:
-                # Often fails if poppler is missing
-                raise OCRDetectionError(f"Failed to convert PDF to images (Poppler missing?): {str(e)}")
+                raise OCRDetectionError(f"Failed to convert PDF to images: {str(e)}")
 
             if not images:
                 raise InvalidFileError("No pages found in PDF")
             
             doc = Document()
             
-            for i, image in enumerate(images):
-                print(f"Processing page {i+1}/{len(images)} with OCR...")
-                try:
-                    text = pytesseract.image_to_string(image)
-                    if text.strip():
+            # Create a temporary directory for processing images
+            with tempfile.TemporaryDirectory() as temp_dir:
+                for i, image in enumerate(images):
+                    print(f"Processing page {i+1}/{len(images)} with OCR...")
+                    
+                    # 1. Try OCR first
+                    try:
+                        text = pytesseract.image_to_string(image)
+                    except Exception as e:
+                        print(f"OCR failed for page {i+1}: {e}")
+                        text = ""
+                    
+                    # 2. Analyze content
+                    # If text is very short (< 50 chars), it's likely an image/chart/table that OCR missed
+                    # or purely graphical content. In this case, we preserve the visual by inserting the image.
+                    if len(text.strip()) < 50:
+                        print(f"  - Low text content detected ({len(text.strip())} chars). Inserting image preservation.")
+                        
+                        # Save image to temp path
+                        img_path = os.path.join(temp_dir, f"page_{i}.png")
+                        image.save(img_path, "PNG")
+                        
+                        # Add image to DOCX (resize to fit standard page width approx 6 inches)
+                        try:
+                            doc.add_picture(img_path, width=Inches(6.0))
+                        except Exception as e:
+                            print(f"  - Failed to insert image: {e}")
+                            # Fallback: Just add whatever text we found
+                            if text.strip():
+                                doc.add_paragraph(text)
+                    else:
+                        # 3. Text found - insert it
+                        # We could also insert the image *and* the text, but that duplicates content.
+                        # For editable requirements, text is preferred.
                         doc.add_paragraph(text)
+
+                    # Add page break except for last page
                     if i < len(images) - 1:
                         doc.add_page_break()
-                except Exception as e:
-                    print(f"OCR warning on page {i+1}: {e}")
-                    # Continue best effort
             
             doc.save(output_path)
             
