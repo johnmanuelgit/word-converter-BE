@@ -83,8 +83,9 @@ class PDFService:
             from docx.enum.text import WD_ALIGN_PARAGRAPH
             
             # Convert PDF pages to images
+            # INCREASED DPI to 300 for better OCR accuracy
             try:
-                images = convert_from_path(pdf_path)
+                images = convert_from_path(pdf_path, dpi=300)
             except Exception as e:
                 raise OCRDetectionError(f"Failed to convert PDF to images: {str(e)}")
 
@@ -98,9 +99,12 @@ class PDFService:
                 for i, image in enumerate(images):
                     print(f"Processing page {i+1}/{len(images)} with OCR...")
                     
-                    # 1. OCR Extraction
+                    # 1. OCR Extraction with Preprocessing
                     try:
-                        text = pytesseract.image_to_string(image)
+                        # Convert to grayscale for better text detection
+                        gray_image = image.convert('L')
+                        # Use default configuration which handles complex layouts well
+                        text = pytesseract.image_to_string(gray_image)
                     except Exception as e:
                         print(f"OCR failed for page {i+1}: {e}")
                         text = ""
@@ -121,17 +125,20 @@ class PDFService:
                     if text.strip():
                         # Add a separator
                         p = doc.add_paragraph()
-                        run = p.add_run("--- Extracted Text Below ---")
-                        run.font.size = Pt(8)
-                        run.font.italic = True
+                        # Add some breathing room
+                        p.paragraph_format.space_before = Pt(12)
+                        run = p.add_run("--- Editable Text (Extracted below) ---")
+                        run.font.size = Pt(9)
+                        run.font.bold = True
                         run.font.color.rgb = None # Default color
                         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                         
                         doc.add_paragraph(text)
                     else:
-                        # Inform user if no text found
+                        # Inform user if genuinely no text found
                         p = doc.add_paragraph()
-                        run = p.add_run("[No text text detected on this page - Image only]")
+                        p.paragraph_format.space_before = Pt(12)
+                        run = p.add_run("[Note: No editable text specific content detected on this page]")
                         run.font.size = Pt(8)
                         run.font.italic = True
                         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
