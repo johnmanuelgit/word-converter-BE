@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: pdf-converter-backend
+    env: docker
+    region: ohio
+    plan: free
+    branch: main
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: PYTHON_VERSION
+        value: 3.12.0
