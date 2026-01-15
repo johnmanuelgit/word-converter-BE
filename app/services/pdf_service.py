@@ -1,4 +1,5 @@
 import os
+import sys
 import PyPDF2
 from pdf2docx import Converter
 import pytesseract
@@ -13,6 +14,38 @@ from app.core.exceptions import (
     ConversionError
 )
 
+# --- Auto-Configuration for Windows Dependencies ---
+if sys.platform.startswith('win'):
+    # 1. Configure Tesseract Path
+    # Common installation paths for Tesseract on Windows
+    tesseract_paths = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        r"C:\Users\User\AppData\Local\Tesseract-OCR\tesseract.exe"
+    ]
+    
+    tesseract_found = False
+    for path in tesseract_paths:
+        if os.path.exists(path):
+            pytesseract.pytesseract.tesseract_cmd = path
+            print(f"✅ Found Tesseract OCR at: {path}")
+            tesseract_found = True
+            break
+    
+    if not tesseract_found:
+        print("⚠️ Tesseract OCR not found in standard paths. Please ensure it is installed and in your PATH.")
+
+    # 2. Configure Poppler Path (optional add to PATH)
+    # Poppler usually comes as a zip, user might put it in C:\Program Files\poppler-xx\bin
+    # We search for it
+    program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+    poppler_glob = list(Path(program_files).glob("poppler-*/bin"))
+    if poppler_glob:
+        poppler_bin = str(poppler_glob[0])
+        if poppler_bin not in os.environ["PATH"]:
+            os.environ["PATH"] += os.pathsep + poppler_bin
+            print(f"✅ Found and added Poppler to PATH: {poppler_bin}")
+            
 class PDFService:
     """Service for PDF analysis and conversion operations"""
     
@@ -98,15 +131,26 @@ class PDFService:
             with tempfile.TemporaryDirectory() as temp_dir:
                 for i, image in enumerate(images):
                     print(f"Processing page {i+1}/{len(images)} with OCR...")
-                    
+                    ocr_error = None
+                    text = ""
+
                     # 1. OCR Extraction with Preprocessing
                     try:
-                        # Convert to grayscale for better text detection
+                        # Convert to grayscale
                         gray_image = image.convert('L')
-                        # Use default configuration which handles complex layouts well
+                        
+                        # Try default configuration first
                         text = pytesseract.image_to_string(gray_image)
+                        
+                        # If that returns nothing, try generic single block (PSM 6) helpful for some layouts
+                        if not text.strip():
+                            print(f"  - Default OCR yielded no text. Retrying with PSM 6...")
+                            custom_config = r'--psm 6'
+                            text = pytesseract.image_to_string(gray_image, config=custom_config)
+                            
                     except Exception as e:
                         print(f"OCR failed for page {i+1}: {e}")
+                        ocr_error = str(e)
                         text = ""
                     
                     # 2. Insert Page Image (Preserves photos, layout, tables)
@@ -125,23 +169,30 @@ class PDFService:
                     if text.strip():
                         # Add a separator
                         p = doc.add_paragraph()
-                        # Add some breathing room
                         p.paragraph_format.space_before = Pt(12)
                         run = p.add_run("--- Editable Text (Extracted below) ---")
                         run.font.size = Pt(9)
                         run.font.bold = True
-                        run.font.color.rgb = None # Default color
+                        run.font.color.rgb = None 
                         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                         
                         doc.add_paragraph(text)
                     else:
-                        # Inform user if genuinely no text found
+                        # Handle Missing Text / Errors
                         p = doc.add_paragraph()
                         p.paragraph_format.space_before = Pt(12)
-                        run = p.add_run("[Note: No editable text specific content detected on this page]")
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        
+                        if ocr_error:
+                            # SHOW THE ACTUAL ERROR to the user in the doc
+                            run = p.add_run(f"[System Error: OCR Engine Failed]\nDetails: {ocr_error}\n(Please ensure Tesseract-OCR is installed and in your PATH)")
+                            run.font.color.rgb = None # You'd need docx.shared.RGBColor usually, skipping strictly for robust 'None' 
+                            run.font.bold = True
+                        else:
+                            run = p.add_run("[Note: No editable text specific content detected on this page. Try ensuring the PDF is clear or increasing DPI.]")
+                        
                         run.font.size = Pt(8)
                         run.font.italic = True
-                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
                     # Add page break except for last page
                     if i < len(images) - 1:
