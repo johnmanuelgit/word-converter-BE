@@ -249,7 +249,6 @@ class EnhancedPDFService:
         - Layout (columns, spacing)
         - Tables and lists
         - Embedded images
-        - Page order (sequential processing)
         
         Args:
             pdf_path: Input PDF path
@@ -261,9 +260,7 @@ class EnhancedPDFService:
         try:
             print("Converting text-based PDF using pdf2docx...")
             cv = Converter(pdf_path)
-            # Convert all pages in sequential order (start=0, end=None means all pages)
-            # This ensures proper page ordering in the output
-            cv.convert(output_path, start=0, end=None)
+            cv.convert(output_path)
             cv.close()
             print("✅ Text-based conversion completed successfully")
         except Exception as e:
@@ -279,7 +276,7 @@ class EnhancedPDFService:
         
         This is the CRITICAL method for handling CVs with photos properly.
         Instead of converting the whole page to an image:
-        1. Extract text in proper reading order using layout mode
+        1. Extract text as editable text
         2. Extract images separately and insert them
         3. Maintain proper layout and formatting
         
@@ -298,16 +295,15 @@ class EnhancedPDFService:
                 for page_num, page in enumerate(pdf.pages):
                     print(f"Processing page {page_num + 1}/{len(pdf.pages)}...")
                     
-                    # Add page break for subsequent pages
-                    if page_num > 0:
-                        doc.add_page_break()
-                    
-                    # Extract text from the page with layout preservation
-                    # Using layout=True maintains the reading order as it appears in the PDF
-                    text = page.extract_text(layout=True)
+                    # Extract text from the page
+                    text = page.extract_text()
                     
                     # Extract images using PyPDF2 (pdfplumber doesn't extract well)
                     images = EnhancedPDFService.extract_images_from_page(pdf_path, page_num)
+                    
+                    # Add page heading
+                    if page_num > 0:
+                        doc.add_page_break()
                     
                     # Insert images first (typically header images like profile photos)
                     for idx, img in enumerate(images):
@@ -332,32 +328,15 @@ class EnhancedPDFService:
                     
                     # Add extracted text as editable content
                     if text and text.strip():
-                        # Preserve line breaks and formatting from layout mode
-                        # Split by double newlines for paragraphs, but keep single newlines
-                        lines = text.split('\n')
-                        current_paragraph = []
-                        
-                        for line in lines:
-                            stripped_line = line.strip()
-                            if stripped_line:
-                                # Add to current paragraph
-                                current_paragraph.append(line.rstrip())
-                            else:
-                                # Empty line means paragraph break
-                                if current_paragraph:
-                                    # Join with preserved spacing and add to document
-                                    para_text = '\n'.join(current_paragraph)
-                                    doc.add_paragraph(para_text)
-                                    current_paragraph = []
-                        
-                        # Add any remaining paragraph
-                        if current_paragraph:
-                            para_text = '\n'.join(current_paragraph)
-                            doc.add_paragraph(para_text)
+                        # Split into paragraphs
+                        paragraphs = text.split('\n')
+                        for para_text in paragraphs:
+                            if para_text.strip():
+                                doc.add_paragraph(para_text.strip())
                     else:
                         # No text found - might need OCR
                         doc.add_paragraph(
-                            "[Note: No text content detected on this page]"
+                            "[Note: No text content detected on this page]",
                         ).italic = True
             
             doc.save(output_path)
